@@ -7,6 +7,6 @@ public interface WeatherApiService {
     @GET("v1/current.json")
     Call<WeatherResponse> getCurrentWeather(
             @Query("key") String apiKey,
-            @Query("q") String coordinates // Формат: "latitude,longitude"
+            @Query("q") String coordinates
     );
 }

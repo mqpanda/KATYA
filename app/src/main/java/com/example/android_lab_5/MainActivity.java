@@ -1,9 +1,21 @@
 package com.example.android_lab_5;
 
 import androidx.appcompat.app.AppCompatActivity;
+import androidx.core.app.ActivityCompat;
 
-import android.graphics.Color;
+import android.Manifest;
+import android.content.pm.PackageManager;
+import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
+import android.graphics.Canvas;
+import android.graphics.drawable.BitmapDrawable;
+import android.graphics.drawable.Drawable;
+import android.location.Location;
+import android.location.LocationListener;
+import android.location.LocationManager;
 import android.os.Bundle;
+import android.os.Handler;
+import android.util.Log;
 import android.widget.Button;
 import android.widget.EditText;
 import android.widget.Toast;
@@ -12,7 +24,7 @@ import org.osmdroid.config.Configuration;
 import org.osmdroid.util.GeoPoint;
 import org.osmdroid.views.MapView;
 import org.osmdroid.views.overlay.Marker;
-import org.osmdroid.views.overlay.Polygon;
+import org.osmdroid.views.overlay.Overlay;
 
 import retrofit2.Call;
 import retrofit2.Callback;
@@ -25,36 +37,49 @@ public class MainActivity extends AppCompatActivity {
     private MapView mapView;
     private WeatherApiService apiService;
     private static final String WEATHER_API_KEY = "a620645c9e934624a69200851241912";
+    private LocationManager locationManager;
+    private boolean isFirstLocationUpdate = true;
+    private Handler gpsHandler = new Handler();
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
 
-        // Настройка конфигурации OSMDroid
+        // OSMDroid
         Configuration.getInstance().setUserAgentValue(getPackageName());
 
-        // Установка макета
         setContentView(R.layout.activity_main);
 
         // Инициализация карты
         mapView = findViewById(R.id.map);
         mapView.setBuiltInZoomControls(true);
         mapView.getController().setZoom(15.0);
-        mapView.getController().setCenter(new GeoPoint(55.75, 37.61)); // Москва
+        mapView.getController().setCenter(new GeoPoint(52.0976, 23.7341)); // брест
 
-        // Поля для ввода координат и кнопка
         EditText latitudeInput = findViewById(R.id.latitudeInput);
         EditText longitudeInput = findViewById(R.id.longitudeInput);
         Button searchButton = findViewById(R.id.searchButton);
 
-        // Настройка Retrofit
+        locationManager = (LocationManager) getSystemService(LOCATION_SERVICE);
+
+        // GPS
+        if (ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED &&
+                ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_COARSE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
+            ActivityCompat.requestPermissions(this, new String[]{Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION}, 1);
+            return;
+        }
+
+        gpsHandler.postDelayed(() -> {
+            locationManager.requestLocationUpdates(LocationManager.GPS_PROVIDER, 0, 0, locationListener);
+        }, 10000);
+
         Retrofit retrofit = new Retrofit.Builder()
                 .baseUrl("https://api.weatherapi.com/")
                 .addConverterFactory(GsonConverterFactory.create())
                 .build();
         apiService = retrofit.create(WeatherApiService.class);
 
-        // Кнопка для поиска погоды
+        // Обработчик кнопки для поиска погоды
         searchButton.setOnClickListener(v -> {
             String lat = latitudeInput.getText().toString();
             String lon = longitudeInput.getText().toString();
@@ -68,12 +93,8 @@ public class MainActivity extends AppCompatActivity {
                 double latitude = Double.parseDouble(lat);
                 double longitude = Double.parseDouble(lon);
 
-                if (latitude < -90 || latitude > 90) {
-                    Toast.makeText(this, "Широта должна быть от -90 до 90", Toast.LENGTH_SHORT).show();
-                    return;
-                }
-                if (longitude < -180 || longitude > 180) {
-                    Toast.makeText(this, "Долгота должна быть от -180 до 180", Toast.LENGTH_SHORT).show();
+                if (latitude < -90 || latitude > 90 || longitude < -180 || longitude > 180) {
+                    Toast.makeText(this, "Координаты некорректны", Toast.LENGTH_SHORT).show();
                     return;
                 }
 
@@ -107,36 +128,92 @@ public class MainActivity extends AppCompatActivity {
 
     private void updateMap(double latitude, double longitude, WeatherResponse.Current weather) {
         GeoPoint location = new GeoPoint(latitude, longitude);
+
+        // Создание маркера с информацией о погоде
         Marker marker = new Marker(mapView);
         marker.setPosition(location);
         marker.setTitle("Температура: " + weather.getTempC() + "°C");
         marker.setSnippet("Осадки: " + weather.getPrecipMm() + " мм\nСкорость ветра: " + weather.getWindKph() + " км/ч");
         marker.setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_BOTTOM);
 
-        // Очистка предыдущих слоев
+        // Очистка предыдущих слоев карты
         mapView.getOverlays().clear();
-
-        // Добавление маркера
         mapView.getOverlays().add(marker);
 
-        // Добавление круга, визуализирующего осадки
-        addRainOverlay(location, weather.getPrecipMm());
+
+        addWeatherIconOverlay(weather.getCondition().getText());
 
         // Центрирование карты
         mapView.getController().setZoom(10.0);
         mapView.getController().setCenter(location);
     }
 
-    private void addRainOverlay(GeoPoint location, double precipMm) {
-        // Радиус круга в зависимости от осадков (чем больше осадки, тем больше радиус)
-        double radiusInMeters = precipMm * 1000; // Пример: 1 мм осадков = 1 км радиуса
-
-        Polygon circle = new Polygon(mapView);
-        circle.setPoints(Polygon.pointsAsCircle(location, radiusInMeters));
-        circle.setFillColor(Color.argb(50, 0, 0, 255)); // Полупрозрачный синий цвет
-        circle.setStrokeColor(Color.BLUE);
-        circle.setStrokeWidth(2.0f);
-
-        mapView.getOverlays().add(circle);
+    // /////////////////////////////////////////////
+    private String getIconForWeatherCondition(String condition) {
+        if (condition.contains("Sunny")) {
+            return "sunny_icon";
+        } else if (condition.contains("Cloudy")) {
+            return "cloudy_icon";
+        } else if (condition.contains("Rain")) {
+            return "rain_icon";
+        } else if (condition.contains("Snow")) {
+            return "snow_icon";
+        } else {
+            return "sunny_icon";
+        }
     }
+
+
+
+    private void addWeatherIconOverlay(String condition) {
+        // Логика выбора иконки на основе текстового описания погоды
+        String iconName = getIconForWeatherCondition(condition);
+        int iconResId = getResources().getIdentifier(iconName, "drawable", getPackageName());
+
+        if (iconResId != 0) {
+            Bitmap bitmap = BitmapFactory.decodeResource(getResources(), iconResId);
+            Bitmap scaledBitmap = Bitmap.createScaledBitmap(bitmap, 300, 300, false); // Уменьшение размера иконки
+
+            Overlay iconOverlay = new Overlay() {
+                @Override
+                public void draw(Canvas canvas, MapView mapView, boolean shadow) {
+                    if (!shadow) {
+                        canvas.drawBitmap(scaledBitmap, 20, 20, null); // Отступы от краев (20px)
+                    }
+                }
+            };
+
+            // Очистка предыдущей иконки и добавление новой
+            mapView.getOverlays().add(iconOverlay);
+
+            Log.d("WeatherIcon", "Иконка погоды добавлена: " + iconName);
+        } else {
+            Log.e("WeatherIcon", "Не удалось найти ресурс для иконки: " + iconName);
+        }
+    }
+
+
+
+
+    private final LocationListener locationListener = new LocationListener() {
+        @Override
+        public void onLocationChanged(Location location) {
+            double latitude = location.getLatitude();
+            double longitude = location.getLongitude();
+
+            if (isFirstLocationUpdate) {
+                fetchWeatherData(latitude, longitude);
+                isFirstLocationUpdate = false;
+            }
+        }
+
+        @Override
+        public void onStatusChanged(String provider, int status, Bundle extras) {}
+
+        @Override
+        public void onProviderEnabled(String provider) {}
+
+        @Override
+        public void onProviderDisabled(String provider) {}
+    };
 }

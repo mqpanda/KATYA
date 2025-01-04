@@ -8,9 +8,10 @@ public class WeatherResponse {
     }
 
     public class Current {
-        private double temp_c; // Температура в градусах Цельсия
-        private double wind_kph; // Скорость ветра (км/ч)
-        private double precip_mm; // Осадки (мм)
+        private double temp_c;
+        private double wind_kph;
+        private double precip_mm;
+        private Condition condition;
 
         public double getTempC() {
             return temp_c;
@@ -22,6 +23,18 @@ public class WeatherResponse {
 
         public double getPrecipMm() {
             return precip_mm;
+        }
+
+        public Condition getCondition() {
+            return condition;
+        }
+    }
+
+    public class Condition {
+        private String text;
+
+        public String getText() {
+            return text;
         }
     }
 }
